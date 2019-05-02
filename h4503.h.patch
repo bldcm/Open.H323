@@ -1,0 +1,196 @@
+Index: include/h450pdu.h
+===================================================================
+RCS file: /cvsroot/openh323/openh323/include/h450pdu.h,v
+retrieving revision 1.11
+diff -u -r1.11 h450pdu.h
+--- include/h450pdu.h	10 Mar 2005 07:01:29 -0000	1.11
++++ include/h450pdu.h	24 Nov 2005 08:54:19 -0000
+@@ -545,6 +545,46 @@
+ };
+ 
+ 
++class H4503Handler : public H450xHandler
++{
++    PCLASSINFO(H4503Handler, H450xHandler);
++  public:
++    H4503Handler(
++      H323Connection & connection,
++      H450xDispatcher & dispatcher
++    );
++
++    virtual BOOL OnReceivedInvoke(
++      int opcode,
++      int invokeId,                           /// InvokeId of operation (used in response)
++      int linkedId,                           /// InvokeId of associated operation (if any)
++      PASN_OctetString * argument             /// Parameters for the initiate operation
++    );
++
++    /**Handle an incoming Near-End Call Hold operation
++    */
++    void OnReceivedDivertingLegInfo2(
++      int linkedId,                            /// InvokeId of associated operation (if any)
++      PASN_OctetString * argument 
++    );
++
++    BOOL GetRedirectingNumber(
++      PString &originalCalledNr,               /// InvokeId of associated operation (if any)
++      PString &lastDivertingNr ,
++      int &divCounter, 
++      int &origdivReason,
++	  int &divReason
++    );
++
++  protected:
++    PString m_originalCalledNr;  // Originally called number (=> the 1st redirecting number) 
++    PString m_lastDivertingNr;   // last diverting number (in the case of nultiple-call forward)
++	int m_diversionCounter;
++	int m_origdiversionReason;   // original diversion reason
++	int m_diversionReason;       // diversion reason 
++};
++
++
+ class H4504Handler : public H450xHandler
+ {
+     PCLASSINFO(H4504Handler, H450xHandler);
+Index: include/h4503.h
+===================================================================
+RCS file: /cvsroot/openh323/openh323/include/h4503.h,v
+retrieving revision 1.1
+diff -u -r1.1 h4503.h
+--- include/h4503.h	5 Apr 2004 03:35:09 -0000	1.1
++++ include/h4503.h	24 Nov 2005 13:20:51 -0000
+@@ -249,6 +249,44 @@
+ 
+ 
+ //
++// DivertingLegInfo2Arg_extension
++//
++
++class H4503_ExtensionSeq;
++class H225_NonStandardParameter;
++
++class H4503_DivertingLegInfo2Arg_extension : public PASN_Choice
++{
++#ifndef PASN_LEANANDMEAN
++    PCLASSINFO(H4503_DivertingLegInfo2Arg_extension, PASN_Choice);
++#endif
++  public:
++    H4503_DivertingLegInfo2Arg_extension(unsigned tag = 0, TagClass tagClass = UniversalTagClass);
++
++    enum Choices {
++      e_extensionSeq,
++      e_nonStandardData
++    };
++
++#if defined(__GNUC__) && __GNUC__ <= 2 && __GNUC_MINOR__ < 9
++    operator H4503_ExtensionSeq &() const;
++#else
++    operator H4503_ExtensionSeq &();
++    operator const H4503_ExtensionSeq &() const;
++#endif
++#if defined(__GNUC__) && __GNUC__ <= 2 && __GNUC_MINOR__ < 9
++    operator H225_NonStandardParameter &() const;
++#else
++    operator H225_NonStandardParameter &();
++    operator const H225_NonStandardParameter &() const;
++#endif
++
++    BOOL CreateObject();
++    PObject * Clone() const;
++};
++
++
++//
+ // IntResult
+ //
+ 
+@@ -282,6 +320,47 @@
+ };
+ 
+ 
++//
++// DivertingLegInfo2Arg
++//
++
++class H4503_DivertingLegInfo2Arg : public PASN_Sequence
++{
++#ifndef PASN_LEANANDMEAN
++    PCLASSINFO(H4503_DivertingLegInfo2Arg, PASN_Sequence);
++#endif
++  public:
++    H4503_DivertingLegInfo2Arg(unsigned tag = UniversalSequence, TagClass tagClass = UniversalTagClass);
++
++    enum OptionalFields {
++      e_originalDiversionReason,
++      e_divertingNr,
++      e_originalCalledNr,
++      e_redirectingInfo,
++      e_originalCalledInfo,
++      e_extension
++    };
++
++    PASN_Integer m_diversionCounter;
++    H4503_DiversionReason m_diversionReason;
++    H4503_DiversionReason m_originalDiversionReason;
++    H4501_EndpointAddress m_divertingNr;
++    H4501_EndpointAddress m_originalCalledNr;
++    PASN_BMPString m_redirectingInfo;
++    PASN_BMPString m_originalCalledInfo;
++    H4503_DivertingLegInfo2Arg_extension m_extension;
++
++    PINDEX GetDataLength() const;
++    BOOL Decode(PASN_Stream & strm);
++    void Encode(PASN_Stream & strm) const;
++#ifndef PASN_NOPRINTON
++    void PrintOn(ostream & strm) const;
++#endif
++    Comparison Compare(const PObject & obj) const;
++    PObject * Clone() const;
++};
++
++
+ #endif // __H4503_H
+ 
+ #endif // if ! H323_DISABLE_H4503
+Index: include/h323con.h
+===================================================================
+RCS file: /cvsroot/openh323/openh323/include/h323con.h,v
+retrieving revision 1.82
+diff -u -r1.82 h323con.h
+--- include/h323con.h	4 Nov 2005 06:41:28 -0000	1.82
++++ include/h323con.h	24 Nov 2005 11:45:16 -0000
+@@ -391,6 +391,7 @@
+ 
+ class H450xDispatcher;
+ class H4502Handler;
++class H4503Handler;
+ class H4504Handler;
+ class H4506Handler;
+ class H45011Handler;
+@@ -896,6 +897,18 @@
+       H323Connection & secondaryCall  /// Secondary call for consultation
+     );
+ 
++    /**Retrieves the redirecting number(s) and additional call diversion information (div. counter
++	   and div. reason) as of an incoming redirected call, currently only according to H.450.3 call diversion
++	   supplementary service 
++	*/
++
++    BOOL GetRedirectingNumber(
++      PString &originalCalledNr,               
++      PString &lastDivertingNr,
++      int &divCounter, 
++      int &originaldivReason,
++      int &divReason);
++
+     /**Place the call on hold, suspending all media channels (H.450.4).  Note it is the responsibility 
+        of the application layer to delete the MOH Channel if music on hold is provided to the remote
+        endpoint.  So far only Local Hold has been implemented. 
+@@ -2485,6 +2498,7 @@
+ #ifdef H323_H450
+     H450xDispatcher                  * h450dispatcher;
+     H4502Handler                     * h4502handler;
++    H4503Handler                     * h4503handler;
+     H4504Handler                     * h4504handler;
+     H4506Handler                     * h4506handler;
+     H45011Handler                    * h45011handler;

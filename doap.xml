@@ -1,0 +1,16 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<doap xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://at01sv13.topcall.co.at/public/xsd/doap_1.1.xsd" moduleId="117" name="openh323" excludeFromCompileCheck="true">
+  <description>
+--- Please add a description ---
+</description>
+  <!--<subscribers>
+<subscriber resourceId="1" name="nu" />
+<subscriber resourceId="47" />
+<subscriber name="andreas.nusser@topcall.com" />
+</subscribers>-->
+  <deviations>
+    <makecmd />
+    <doccmd />
+    <testcmd />
+  </deviations>
+</doap>

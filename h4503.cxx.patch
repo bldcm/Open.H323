@@ -1,0 +1,428 @@
+Index: src/h450pdu.cxx
+===================================================================
+RCS file: /cvsroot/openh323/openh323/src/h450pdu.cxx,v
+retrieving revision 1.27
+diff -u -r1.27 h450pdu.cxx
+--- src/h450pdu.cxx	12 Jul 2005 12:28:57 -0000	1.27
++++ src/h450pdu.cxx	24 Nov 2005 08:48:34 -0000
+@@ -128,6 +128,7 @@
+ 
+ #include "h4501.h"
+ #include "h4502.h"
++#include "h4503.h"
+ #include "h4504.h"
+ #include "h4506.h"
+ #include "h45010.h"
+@@ -1517,6 +1518,77 @@
+   }
+ }
+ 
++/////////////////////////////////////////////////////////////////////////////
++
++H4503Handler::H4503Handler(H323Connection & conn, H450xDispatcher & disp)
++  : H450xHandler(conn, disp)
++{
++  dispatcher.AddOpCode(H4503_H323CallDiversionOperations::e_divertingLegInformation2, this);
++   
++}
++
++BOOL H4503Handler::OnReceivedInvoke(int opcode,
++                                    int invokeId,
++                                    int linkedId,
++                                    PASN_OctetString *argument)
++{
++  currentInvokeId = invokeId;
++  switch (opcode) {
++    case H4503_H323CallDiversionOperations::e_divertingLegInformation2:
++      OnReceivedDivertingLegInfo2(linkedId, argument);
++      break;
++    
++    default:
++      currentInvokeId = 0;
++      return FALSE;
++  }
++
++  return TRUE;
++}
++
++void H4503Handler::OnReceivedDivertingLegInfo2(int /* linkedId*/, PASN_OctetString * argument) 
++{
++  PTRACE(4, "H4503\tReceived a DivertingLegInfo2 Invoke APDU from the remote endpoint.");  
++  H4503_DivertingLegInfo2Arg divertingLegInfo2Arg;
++  DecodeArguments(argument, divertingLegInfo2Arg, -1); 
++
++  if(divertingLegInfo2Arg.HasOptionalField(H4503_DivertingLegInfo2Arg::e_originalCalledNr)) {
++    //m_originalCalledNr = divertingLegInfo2Arg.m_originalCalledNr.GetTypeAsString();
++	H450ServiceAPDU::ParseEndpointAddress(divertingLegInfo2Arg.m_originalCalledNr, m_originalCalledNr);
++  }
++
++  if(divertingLegInfo2Arg.HasOptionalField(H4503_DivertingLegInfo2Arg::e_divertingNr))
++    m_lastDivertingNr = divertingLegInfo2Arg.m_divertingNr.GetTypeAsString();
++
++  m_diversionCounter = divertingLegInfo2Arg.m_diversionCounter.GetValue();
++  m_diversionReason = divertingLegInfo2Arg.m_diversionReason.GetValue();
++
++  PTRACE(4, "H450.3\tOnReceivedDivertingLegInfo2 redirNUm=" << m_originalCalledNr);
++
++  
++}
++
++BOOL H4503Handler::GetRedirectingNumber(PString &originalCalledNr, PString &lastDivertingNr, int &divCounter, int &origdivReason, int &divReason)
++{
++ BOOL bRedirAvail=false; 
++
++ if(!m_originalCalledNr.IsEmpty()) {
++   originalCalledNr = m_originalCalledNr; 
++   bRedirAvail = true; 
++ }
++ if(!m_lastDivertingNr.IsEmpty()) {
++   lastDivertingNr  = m_lastDivertingNr;
++   bRedirAvail = true; 
++ }
++
++ divCounter = m_diversionCounter;
++ divReason  = m_diversionReason;
++ origdivReason  = m_origdiversionReason;
++
++ return bRedirAvail; 
++
++}
++
+ 
+ /////////////////////////////////////////////////////////////////////////////
+ 
+Index: src/h323.cxx
+===================================================================
+RCS file: /cvsroot/openh323/openh323/src/h323.cxx,v
+retrieving revision 1.358
+diff -u -r1.358 h323.cxx
+--- src/h323.cxx	23 Sep 2005 05:46:41 -0000	1.358
++++ src/h323.cxx	24 Nov 2005 13:39:09 -0000
+@@ -1242,6 +1242,7 @@
+ 
+ #ifdef H323_H450
+ #include "h4501.h"
++#include "h4503.h"
+ #include "h4504.h"
+ #include "h45011.h"
+ #include "h450pdu.h"
+@@ -1516,6 +1517,7 @@
+ #ifdef H323_H450
+   h450dispatcher = new H450xDispatcher(*this);
+   h4502handler = new H4502Handler(*this, *h450dispatcher);
++  h4503handler = new H4503Handler(*this, *h450dispatcher);
+   h4504handler = new H4504Handler(*this, *h450dispatcher);
+   h4506handler = new H4506Handler(*this, *h450dispatcher);
+   h45011handler = new H45011Handler(*this, *h450dispatcher);
+@@ -4090,6 +4092,16 @@
+   holdMediaChannel = SwapHoldMediaChannels(holdMediaChannel);
+ }
+ 
++BOOL H323Connection::GetRedirectingNumber(
++    PString &originalCalledNr,               
++    PString &lastDivertingNr,
++    int &divCounter, 
++    int &originaldivReason,
++	int &divReason)
++{
++  return h4503handler->GetRedirectingNumber(originalCalledNr,lastDivertingNr,
++	                                     divCounter,originaldivReason,divReason);
++}
+ 
+ void H323Connection::RetrieveCall()
+ {
+Index: src/h4503.cxx
+===================================================================
+RCS file: /cvsroot/openh323/openh323/src/h4503.cxx,v
+retrieving revision 1.2
+diff -u -r1.2 h4503.cxx
+--- src/h4503.cxx	7 Jun 2005 07:09:06 -0000	1.2
++++ src/h4503.cxx	24 Nov 2005 13:20:51 -0000
+@@ -403,6 +403,96 @@
+ }
+ 
+ 
++
++#ifndef PASN_NOPRINTON
++const static PASN_Names Names_H4503_DivertingLegInfo2Arg_extension[]={
++      {"extensionSeq",0}
++     ,{"nonStandardData",1}
++};
++#endif
++//
++// DivertingLegInfo2Arg_extension
++//
++
++H4503_DivertingLegInfo2Arg_extension::H4503_DivertingLegInfo2Arg_extension(unsigned tag, PASN_Object::TagClass tagClass)
++  : PASN_Choice(tag, tagClass, 2, FALSE
++#ifndef PASN_NOPRINTON
++    ,(const PASN_Names *)Names_H4503_DivertingLegInfo2Arg_extension,2
++#endif
++)
++{
++}
++
++
++#if defined(__GNUC__) && __GNUC__ <= 2 && __GNUC_MINOR__ < 9
++H4503_DivertingLegInfo2Arg_extension::operator H4503_ExtensionSeq &() const
++#else
++H4503_DivertingLegInfo2Arg_extension::operator H4503_ExtensionSeq &()
++{
++#ifndef PASN_LEANANDMEAN
++  PAssert(PIsDescendant(PAssertNULL(choice), H4503_ExtensionSeq), PInvalidCast);
++#endif
++  return *(H4503_ExtensionSeq *)choice;
++}
++
++
++H4503_DivertingLegInfo2Arg_extension::operator const H4503_ExtensionSeq &() const
++#endif
++{
++#ifndef PASN_LEANANDMEAN
++  PAssert(PIsDescendant(PAssertNULL(choice), H4503_ExtensionSeq), PInvalidCast);
++#endif
++  return *(H4503_ExtensionSeq *)choice;
++}
++
++
++#if defined(__GNUC__) && __GNUC__ <= 2 && __GNUC_MINOR__ < 9
++H4503_DivertingLegInfo2Arg_extension::operator H225_NonStandardParameter &() const
++#else
++H4503_DivertingLegInfo2Arg_extension::operator H225_NonStandardParameter &()
++{
++#ifndef PASN_LEANANDMEAN
++  PAssert(PIsDescendant(PAssertNULL(choice), H225_NonStandardParameter), PInvalidCast);
++#endif
++  return *(H225_NonStandardParameter *)choice;
++}
++
++
++H4503_DivertingLegInfo2Arg_extension::operator const H225_NonStandardParameter &() const
++#endif
++{
++#ifndef PASN_LEANANDMEAN
++  PAssert(PIsDescendant(PAssertNULL(choice), H225_NonStandardParameter), PInvalidCast);
++#endif
++  return *(H225_NonStandardParameter *)choice;
++}
++
++
++BOOL H4503_DivertingLegInfo2Arg_extension::CreateObject()
++{
++  switch (tag) {
++    case e_extensionSeq :
++      choice = new H4503_ExtensionSeq();
++      return TRUE;
++    case e_nonStandardData :
++      choice = new H225_NonStandardParameter();
++      return TRUE;
++  }
++
++  choice = NULL;
++  return FALSE;
++}
++
++
++PObject * H4503_DivertingLegInfo2Arg_extension::Clone() const
++{
++#ifndef PASN_LEANANDMEAN
++  PAssert(IsClass(H4503_DivertingLegInfo2Arg_extension::Class()), PInvalidCast);
++#endif
++  return new H4503_DivertingLegInfo2Arg_extension(*this);
++}
++
++
+ //
+ // IntResult
+ //
+@@ -517,6 +607,152 @@
+ }
+ 
+ 
++//
++// DivertingLegInfo2Arg
++//
++
++H4503_DivertingLegInfo2Arg::H4503_DivertingLegInfo2Arg(unsigned tag, PASN_Object::TagClass tagClass)
++  : PASN_Sequence(tag, tagClass, 6, TRUE, 0)
++{
++  m_diversionCounter.SetConstraints(PASN_Object::FixedConstraint, 1, 15);
++  m_redirectingInfo.SetConstraints(PASN_Object::FixedConstraint, 1, 128);
++  m_originalCalledInfo.SetConstraints(PASN_Object::FixedConstraint, 1, 128);
++}
++
++
++#ifndef PASN_NOPRINTON
++void H4503_DivertingLegInfo2Arg::PrintOn(ostream & strm) const
++{
++  int indent = strm.precision() + 2;
++  strm << "{\n";
++  strm << setw(indent+19) << "diversionCounter = " << setprecision(indent) << m_diversionCounter << '\n';
++  strm << setw(indent+18) << "diversionReason = " << setprecision(indent) << m_diversionReason << '\n';
++  if (HasOptionalField(e_originalDiversionReason))
++    strm << setw(indent+26) << "originalDiversionReason = " << setprecision(indent) << m_originalDiversionReason << '\n';
++  if (HasOptionalField(e_divertingNr))
++    strm << setw(indent+14) << "divertingNr = " << setprecision(indent) << m_divertingNr << '\n';
++  if (HasOptionalField(e_originalCalledNr))
++    strm << setw(indent+19) << "originalCalledNr = " << setprecision(indent) << m_originalCalledNr << '\n';
++  if (HasOptionalField(e_redirectingInfo))
++    strm << setw(indent+18) << "redirectingInfo = " << setprecision(indent) << m_redirectingInfo << '\n';
++  if (HasOptionalField(e_originalCalledInfo))
++    strm << setw(indent+21) << "originalCalledInfo = " << setprecision(indent) << m_originalCalledInfo << '\n';
++  if (HasOptionalField(e_extension))
++    strm << setw(indent+12) << "extension = " << setprecision(indent) << m_extension << '\n';
++  strm << setw(indent-1) << setprecision(indent-2) << "}";
++}
++#endif
++
++
++PObject::Comparison H4503_DivertingLegInfo2Arg::Compare(const PObject & obj) const
++{
++#ifndef PASN_LEANANDMEAN
++  PAssert(PIsDescendant(&obj, H4503_DivertingLegInfo2Arg), PInvalidCast);
++#endif
++  const H4503_DivertingLegInfo2Arg & other = (const H4503_DivertingLegInfo2Arg &)obj;
++
++  Comparison result;
++
++  if ((result = m_diversionCounter.Compare(other.m_diversionCounter)) != EqualTo)
++    return result;
++  if ((result = m_diversionReason.Compare(other.m_diversionReason)) != EqualTo)
++    return result;
++  if ((result = m_originalDiversionReason.Compare(other.m_originalDiversionReason)) != EqualTo)
++    return result;
++  if ((result = m_divertingNr.Compare(other.m_divertingNr)) != EqualTo)
++    return result;
++  if ((result = m_originalCalledNr.Compare(other.m_originalCalledNr)) != EqualTo)
++    return result;
++  if ((result = m_redirectingInfo.Compare(other.m_redirectingInfo)) != EqualTo)
++    return result;
++  if ((result = m_originalCalledInfo.Compare(other.m_originalCalledInfo)) != EqualTo)
++    return result;
++  if ((result = m_extension.Compare(other.m_extension)) != EqualTo)
++    return result;
++
++  return PASN_Sequence::Compare(other);
++}
++
++
++PINDEX H4503_DivertingLegInfo2Arg::GetDataLength() const
++{
++  PINDEX length = 0;
++  length += m_diversionCounter.GetObjectLength();
++  length += m_diversionReason.GetObjectLength();
++  if (HasOptionalField(e_originalDiversionReason))
++    length += m_originalDiversionReason.GetObjectLength();
++  if (HasOptionalField(e_divertingNr))
++    length += m_divertingNr.GetObjectLength();
++  if (HasOptionalField(e_originalCalledNr))
++    length += m_originalCalledNr.GetObjectLength();
++  if (HasOptionalField(e_redirectingInfo))
++    length += m_redirectingInfo.GetObjectLength();
++  if (HasOptionalField(e_originalCalledInfo))
++    length += m_originalCalledInfo.GetObjectLength();
++  if (HasOptionalField(e_extension))
++    length += m_extension.GetObjectLength();
++  return length;
++}
++
++
++BOOL H4503_DivertingLegInfo2Arg::Decode(PASN_Stream & strm)
++{
++  if (!PreambleDecode(strm))
++    return FALSE;
++
++  if (!m_diversionCounter.Decode(strm))
++    return FALSE;
++  if (!m_diversionReason.Decode(strm))
++    return FALSE;
++  if (HasOptionalField(e_originalDiversionReason) && !m_originalDiversionReason.Decode(strm))
++    return FALSE;
++  if (HasOptionalField(e_divertingNr) && !m_divertingNr.Decode(strm))
++    return FALSE;
++  if (HasOptionalField(e_originalCalledNr) && !m_originalCalledNr.Decode(strm))
++    return FALSE;
++  if (HasOptionalField(e_redirectingInfo) && !m_redirectingInfo.Decode(strm))
++    return FALSE;
++  if (HasOptionalField(e_originalCalledInfo) && !m_originalCalledInfo.Decode(strm))
++    return FALSE;
++  if (HasOptionalField(e_extension) && !m_extension.Decode(strm))
++    return FALSE;
++
++  return UnknownExtensionsDecode(strm);
++}
++
++
++void H4503_DivertingLegInfo2Arg::Encode(PASN_Stream & strm) const
++{
++  PreambleEncode(strm);
++
++  m_diversionCounter.Encode(strm);
++  m_diversionReason.Encode(strm);
++  if (HasOptionalField(e_originalDiversionReason))
++    m_originalDiversionReason.Encode(strm);
++  if (HasOptionalField(e_divertingNr))
++    m_divertingNr.Encode(strm);
++  if (HasOptionalField(e_originalCalledNr))
++    m_originalCalledNr.Encode(strm);
++  if (HasOptionalField(e_redirectingInfo))
++    m_redirectingInfo.Encode(strm);
++  if (HasOptionalField(e_originalCalledInfo))
++    m_originalCalledInfo.Encode(strm);
++  if (HasOptionalField(e_extension))
++    m_extension.Encode(strm);
++
++  UnknownExtensionsEncode(strm);
++}
++
++
++PObject * H4503_DivertingLegInfo2Arg::Clone() const
++{
++#ifndef PASN_LEANANDMEAN
++  PAssert(IsClass(H4503_DivertingLegInfo2Arg::Class()), PInvalidCast);
++#endif
++  return new H4503_DivertingLegInfo2Arg(*this);
++}
++
++
+ #endif // if ! H323_DISABLE_H4503
+ 
+ 
+Index: src/h4503.asn
+===================================================================
+RCS file: /cvsroot/openh323/openh323/src/h4503.asn,v
+retrieving revision 1.1
+diff -u -r1.1 h4503.asn
+--- src/h4503.asn	2 May 2001 00:25:11 -0000	1.1
++++ src/h4503.asn	24 Nov 2005 11:58:27 -0000
+@@ -114,7 +114,29 @@
+     -- videotelephony (36), 
+     ...
+   }
+-
++  
++   DivertingLegInfo2Arg ::= SEQUENCE
++                          --  sent from the re-routing h.323-endpoint to the diverted-to h.323-endpoint 
++  {
++    diversionCounter INTEGER (1..15),
++    diversionReason         DiversionReason,
++    originalDiversionReason DiversionReason OPTIONAL,
++    divertingNr             EndpointAddress OPTIONAL,
++    originalCalledNr        EndpointAddress OPTIONAL,
++    redirectingInfo         BMPString (SIZE(1..128)) OPTIONAL,
++    originalCalledInfo      BMPString (SIZE(1..128)) OPTIONAL,
++    extension               CHOICE 
++        {
++         extensionSeq    ExtensionSeq,        
++         nonStandardData NonStandardParameter
++        } OPTIONAL,
++        ...
++ }
++  
++	                  -- The divertingNr element is mandatory except in the case of interworking
++	
++   
++	
+   -- For multimedia calls the value "allServices" shall be used only. 
+   -- The usage of the other codepoints for multimedia calls is for further study.
+ 
